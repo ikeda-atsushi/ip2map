@@ -56,15 +56,9 @@ typedef struct SocketDesc {
   int desc;
 } SocketDesc;
 
-typedef struct MemChunk {
-  char *memory;
-  size_t size;
-} MemChunk;
-
 SocketDesc *sdhead;
 double **geocode;
 static GeoIP *geo;
-MemChunk memchunk;
 
 static int NUMOFIP = 10;
 static char *IP_FOWARD = "/proc/sys/net/ipv4/ip_forward";
@@ -84,27 +78,6 @@ button_clicked(GtkWidget *button, gpointer user_data)
   gtk_main_quit();
 }
 
-static size_t
-WriteOnMemory(void *contents, size_t size, size_t memb, void *userp)
-{
-  size_t relsize;
-  MemChunk *mem;
-
-  relsize = size * memb;
-  mem = (MemChunk *)userp;
-
-  mem->memory = realloc(mem->memory, mem->size+relsize+1);
-  if (mem->memory == NULL) {
-    fprintf(stderr, "Not enough memory\n");
-    return 0;
-  }
-
-  memcpy(&(mem->memory[mem->size]), contents, relsize);
-  mem->size += relsize;
-  mem->memory[mem->size] = 0;
-
-  return relsize;
-}
 
 void
 buildURL(char **url)
@@ -365,7 +338,6 @@ main(int argc, char **argv)
   CURL *curl;
   CURLcode res;
   SocketDesc *sptr, *sdp, *mainp;
-  MemChunk memchunk;
   GtkWidget *window;
 
   static int BUF = 2048;
@@ -519,8 +491,6 @@ main(int argc, char **argv)
     }
   } // for
   fprintf(stdout, "REST=%s\n", rest);
-  memchunk.memory = malloc(1);
-  memchunk.size = 0;
   curl_global_init(CURL_GLOBAL_ALL);
 
   curl = curl_easy_init();
@@ -531,11 +501,7 @@ main(int argc, char **argv)
 
     curl_easy_setopt(curl, CURLOPT_URL, rest);
 
-    /* write image data on memory
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteOnMemory);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&memchunk);
-    */
-    // write image on a file
+    /* write image on a file */
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
 
@@ -544,9 +510,8 @@ main(int argc, char **argv)
     res = curl_easy_perform(curl);
     if (res!= CURLE_OK) {
       fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res)); 
-    } else {
-      fprintf(stdout, "%lu bytes retrived\n", (long)memchunk.size);
     }
+
     curl_easy_cleanup(curl);
     curl_global_cleanup();
     fclose(fp);
@@ -597,9 +562,6 @@ main(int argc, char **argv)
   fclose(fp);
 #endif
 
-  fprintf(stdout, "Done\n");
-
-  free(memchunk.memory);
   gtk_main();
 
   return 0;
