@@ -232,23 +232,10 @@ AnalyzeIp(u_char *data, int size)
       return (-1);
     }
 
-  /*
-   * get location from source IP address 
-   */
-  /*
-    fprintf(fp, "\nGeoIP from source ********\n");
-    fprintf(fp, "saddr=%s\n", ip_ip2str(iphdr->saddr, buf, 80));
-  */
-
   if (getCityFromIP(iphdr)==NULL) {
     free(buf);
     return (-1);
   }
-
-  /*
-    fprintf(stdout, "\nGeoIP from destination ********\n");
-    fprintf(stdout, "daddr=%s\n", ip_ip2str(iphdr->daddr, buf, 80));
-  */
 
 #ifdef DEST
   if (getCityFromIP(iphdr)==NULL) {
