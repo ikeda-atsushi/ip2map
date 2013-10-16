@@ -47,25 +47,42 @@
 #undef max
 #define max(x,y) ((x) > (y) ? (x) : (y))
 
-static char * DB_CITY ="/usr/share/GeoIP/GeoIPCity.dat";
-static char * TMP_PNG = "tmp.png";
-
 typedef struct SocketDesc {
   struct SocketDesc *next; 
   struct SocketDesc *preb;
   int desc;
 } SocketDesc;
 
-SocketDesc *sdhead;
-double **geocode;
-static GeoIP *geo;
+SocketDesc *__sdhead;
+static GeoIP *__geo;
 
-static int NUMOFIP = 10;
+typedef struct IP2Location {
+  struct IP2Location *next;
+  struct IP2Location *preb;
+  GeoIPRecord *geoip;
+  double latitude;
+  double longitude;
+  int     port;
+} IP2Location;
+
+IP2Location *__ip2loc;
+
+/* GEOIP data base */
+static char * DB_CITY ="/usr/share/GeoIP/GeoIPCity.dat";
+/* map image tmp file */
+static char * TMP_PNG = "tmp.png";
+
+/* number of IP address */
 static char *IP_FOWARD = "/proc/sys/net/ipv4/ip_forward";
 
+/* label of markers */
 static char *ABC       = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 char        *MARKER    = "markers=size:tiny%7Ccolor:blue%7Clabel:S%7C<LATI>,<LONG>";
+/* REST for Google static map  */
 static char *STATICMAP_BASE_URL = "https://maps.google.com/maps/api/staticmap?center=38.822591,-98.818363&zoom=0&size=400x200&maptype=terrain&sensor=false";
+
+/* program name = argv[0] */
+char *__prog;
 
 double    ** getCityFromIP(struct iphdr *iphdr);
 SocketDesc * OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly);
@@ -75,26 +92,27 @@ int          turnOffIPforward(void);
 static void 
 button_clicked(GtkWidget *button, gpointer user_data)
 {
+  GeoIP_delete(__geo);
   gtk_main_quit();
 }
-
 
 void
 buildURL(char **url)
 {
-  int len, cnt;
-  char tmp[128];
-  char *c;
+  int len, n;
+  char *tmp, *c;
+  IP2Location *ip;
 
-  tmp[0]='\0';
+  tmp = malloc(512);
   len = 0;
-  cnt = 0;
-  do 
+
+  for (ip=__ip2loc;ip!=__ip2loc;ip=ip->next) 
     {
-      sprintf(tmp, "&markers=size:tiny|  color:blue|  label:%c|  %9.6f,%9.6f", ABC[cnt], geocode[cnt][Latt], geocode[cnt][Long]);
+      n = (int)((ip - __ip2loc)/26);
+      sprintf(tmp, "&markers=size:tiny|  color:blue|  label:%c|  %9.6f,%9.6f", ABC[n], ip->latitude, ip->longitude);
       len = strlen(*url);
       strcat(*url, tmp);
-    } while(++cnt<NUMOFIP) ;
+    } 
 
   len = strlen(*url);
   for (c=*url;c-*url<=len;c++) {
@@ -104,7 +122,6 @@ buildURL(char **url)
       c[2]='C';
     }
   }
-
 
 #ifdef URL
   printf("URL: %s\n", *url);
@@ -151,14 +168,13 @@ is_privateIP(const char *ip)
 double **
 getCityFromIP(struct iphdr *iphdr)
 {
-  int i, available;
   char *ip, *buf;
   u_char *ptr;
   GeoIPRecord *rec;
+  IP2Location *newp;
 
   rec = NULL;
   ptr = (u_char *)iphdr;
-  available = 0;
   buf = malloc(80);
   ip = ip_ip2str(iphdr->saddr, buf, 80);
 
@@ -167,7 +183,7 @@ getCityFromIP(struct iphdr *iphdr)
     return (NULL);
   }
 
-  if ((rec=GeoIP_record_by_addr(geo, ip)) == NULL) {
+  if ((rec=GeoIP_record_by_addr(__geo, ip)) == NULL) {
     fprintf(stderr, "error on getting geocode\n");
     free(buf);
     return (NULL);
@@ -186,36 +202,34 @@ getCityFromIP(struct iphdr *iphdr)
   fprintf(stdout, "Longitude  : %10.6f\n\n", rec->longitude);
   //#endif
 
-  for (i=0; i<NUMOFIP; i++) {
-    if (geocode[i][Latt] == rec->latitude 
-	&& geocode[i][Long] == rec->longitude) {
-      break;
-    } else if (geocode[i][Latt] == 0.0 
-	  && geocode[i][Long] == 0.0) {
-	available = 1;
-	break;
-    } 
-  } // for
-
-  if (available == 1) {
-    geocode[i][Latt] = rec->latitude;
-    geocode[i][Long] = rec->longitude;
+  if ((newp=(IP2Location *)malloc(sizeof(IP2Location)))==NULL) {
+    fprintf(stderr, "%s: not enough memory\n", __prog);
+    return(NULL);
   }
 
-  GeoIPRecord_delete(rec);
+  newp->next       = __ip2loc->next;
+  newp->next->preb = newp;
+  newp->preb       = __ip2loc;
+  __ip2loc->next   = newp;
+
+  newp->geoip = rec;
+  newp->latitude = rec->latitude;
+  newp->longitude = rec->longitude;
+  newp->port = ntohs(((struct tcphdr *)ptr)->dest);
+
   free(buf);
-  return (geocode);
+
+  return (newp);
 }
 
 SocketDesc *
-OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly)
+OpenRawSocket(int cnt, char **dev, int promiscFlag, int ipOnly)
 {
-  int i, on, cnt, soc;
+  int i, on, soc;
   struct ifreq ifreq;
   struct sockaddr_ll sa;
-  SocketDesc *sdp;
+  SocketDesc *newp;
 
-  cnt = argc;
   while (cnt>0)
     {
       if(ipOnly) {
@@ -261,20 +275,22 @@ OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly)
 	return (NULL);
       }
 
-      sdp = (SocketDesc *)malloc(sizeof(SocketDesc));
-      if (sdhead==NULL) {
-	// make a link head
-	sdp->desc = soc;
-	sdp->next = sdp;
-	sdp->preb = sdp;
-	sdhead = sdp;
-      } else {
-	sdp->next = sdhead->next;
-	sdp->preb = sdhead;
-	sdhead->next = sdp;
-	(sdhead->preb==sdhead)?sdhead->preb=sdp:0;
-	sdp->desc = soc;
+      /* Alloc memory on SocketDesc */
+      if ((newp=(SocketDesc *)malloc(sizeof(SocketDesc)))==NULL) {
+	fprintf(stderr, "%s: not enough memory\n", __prog);
+	return(-1);
       }
+      if (__sdhead==NULL) {
+	fprintf(stderr, "%s: internal inconsistency\n", __prog);
+	return (NULL);
+      } 
+
+      /* link in a new SocketDesc */
+      newp->next       = __sdhead->next;
+      newp->next->preb = newp;
+      newp->preb       = __sdhead;
+      __sdhead->next   = newp;
+      newp->desc       = soc;
       
       if (promiscFlag) {
 	if (ioctl(soc, SIOCGIFFLAGS, &ifreq)<0) {
@@ -310,7 +326,7 @@ OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly)
       } while (i);
     } // while(cnt>0)
 
-  return (sdp);
+  return (newp);
 }
 
 // SIGUSR1
@@ -328,6 +344,37 @@ sigusr2_handler(int sig)
 }
 
 int
+init(void)
+{
+  if ((__geo=GeoIP_open(DB_CITY, 0))==NULL) {
+    fprintf(stderr, "%s: GeoIPCity.dat does not exist\n", __prog);
+    return (-1);
+  }
+
+  if ((__ip2loc=(IP2Location *)malloc(sizeof(IP2Location)))==NULL) {
+    fprintf(stderr, "%s: not enough memory\n", __prog);
+    return(-1);
+  }
+
+  __ip2loc->next       = __ip2loc;
+  __ip2loc->preb       = __ip2loc;
+  __ip2loc->geoip      = NULL;
+  __ip2loc->latitude   = 0.0;
+  __ip2loc->longitude = 0.0;
+  __ip2loc->port       = -1;
+
+  if ((__sdhead=(SocketDesc *)malloc(sizeof(SocketDesc)))==NULL) {
+    fprintf(stderr, "%s: not enough memory\n", __prog);
+    return(-1);
+  }
+  __sdhead->desc = -1;
+  __sdhead->next = __sdhead;
+  __sdhead->preb = __sdhead;
+
+  return(0);
+}
+
+int
 main(int argc, char **argv)
 {
   int  i, n, ndfd, size, len;
@@ -339,61 +386,32 @@ main(int argc, char **argv)
   CURLcode res;
   SocketDesc *sptr, *sdp, *mainp;
   GtkWidget *window;
+  IP2Location *ip;
 
-  static int BUF = 2048;
+  static int BUF_SIZE = 2048;
+
+  __prog = argv[0];
 
   if (argc <= 1) {
-    fprintf(stderr, "Usage: %s dev1 [dev2 ...]\n", argv[0]);
+    fprintf(stderr, "Usage: %s dev1 [dev2 ...]\n", __prog);
     return (-1);
   }
 
-#ifdef NOPRINT
-  FILE *keep=NULL;
-  FILE *fp;
+  init();
 
-  if ((fp=fopen("/dev/null", "w")) != NULL) {
-    keep = stderr;
-    stderr = fp;
-  }
-#endif
-  
   gtk_init(&argc, &argv);
 
-  if ((geo=GeoIP_open(DB_CITY, 0))==NULL) {
-    fprintf(stderr, "error: GeoIPCity.dat does not exist\n");
-    return (-1);
-  }
-
-  sdhead = NULL;
-  if ((buf=(u_char *)malloc(BUF))==NULL) {
+  if ((buf=(u_char *)malloc(BUF_SIZE))==NULL) {
     perror("malloc");
     return(-1);
   }
-  if ((geocode=(double **)calloc(NUMOFIP, sizeof(double **)))==NULL) {
-    GeoIP_delete(geo);
-    perror("Sufficient memory");
-    return(-1);
-  }
 
-  for (i=0; i<NUMOFIP; i++) {
-    if ((geocode[i] = (double *)calloc(2, sizeof(double *)))==NULL) {
-      perror("Not enough memeory");
-      GeoIP_delete(geo);
-      return(-1);
-    }
-  }
-
-  if ((URL=(char *)malloc(2048))==NULL) {
+  if ((URL=(char *)malloc(BUF_SIZE))==NULL) {
     perror("Not enoght memory");
-    GeoIP_delete(geo);
+    GeoIP_delete(__geo);
     return (-1);
   }
   URL[0]='\0';
-
-  // Disable IP foward
-  /*  if (turnOffIPforward()<0){
-    return(-1);
-    }*/
 
   /* SIGUSR1のシグナルハンドラを設定 */
   signal(SIGUSR1, sigusr1_handler);
@@ -404,7 +422,7 @@ main(int argc, char **argv)
   if ((sdp=OpenRawSocket(argc-1, argv, 0, 0))<0) {
     fprintf(stderr, "InitRawSocket:error:%s'n", argv[1]);
     free(buf);
-    GeoIP_delete(geo);
+    GeoIP_delete(__geo);
     return (-1);
   }
 
@@ -415,13 +433,13 @@ main(int argc, char **argv)
   while(i++<=320) {
 
     FD_ZERO(&readfds);
-    sptr = sdhead;
+    sptr = __sdhead;
     ndfd = 0;
     do {
       FD_SET(sptr->desc, &readfds);
       ndfd = max(ndfd, sptr->desc);
       sptr = sptr->next;
-    } while (sptr != sdhead);
+    } while (sptr != __sdhead);
 
     /* SIGUSR2が来るまでselectはblockし続けます */
     /* SIGUSR1ではEINTRは返りません */
@@ -430,14 +448,14 @@ main(int argc, char **argv)
 	  continue; */
     if (n < 0) {
       perror ("pselect()");
-      GeoIP_delete(geo);
-      exit (1);
+      GeoIP_delete(__geo);
+      return (-1);
     }
     
-    mainp = sdhead;
+    mainp = __sdhead;
     do {
       if (FD_ISSET(mainp->desc, &readfds)) {
-	if ((size=read(mainp->desc, buf, BUF))<=0) {
+	if ((size=read(mainp->desc, buf, BUF_SIZE))<=0) {
 	  if (size==0) break;
 	  perror("read");
 	  break;
@@ -450,9 +468,9 @@ main(int argc, char **argv)
 	buildURL(&URL);
 	*/
 	mainp = mainp->next;
-      } while (mainp!=sdhead);
+      } while (mainp!=__sdhead);
       mainp = mainp->next;
-    } while (mainp != sdhead);
+    } while (mainp != __sdhead);
   } // while(1)
 
   // Build URL to get a map from Google
@@ -470,16 +488,13 @@ main(int argc, char **argv)
 
   strcat(rest, STATICMAP_BASE_URL);
 
-  for (i=0;i<NUMOFIP;i++) {
-
-    fprintf(stdout, "Latitude   : %10.6f\n", geocode[i][Latt]);
-    fprintf(stdout, "Longitude  : %10.6f\n\n", geocode[i][Long]);
+  for (ip=__ip2loc;ip!=__ip2loc;ip=ip->next) {
+    fprintf(stdout, "Latitude   : %10.6f\n", ip->latitude);
+    fprintf(stdout, "Longitude  : %10.6f\n\n", ip->longitude);
     
-    if (geocode[i][Latt] != 0.0 && geocode[i][Long] != 0.0) {
-      sprintf(tmp, "&markers=size:tiny|  color:blue|  label:%c:|  %f,%f", ABC[i], geocode[i][Latt], geocode[i][Long]);
+    sprintf(tmp, "&markers=size:tiny|  color:blue|  label:%c:|  %f,%f", ABC[i], ip->latitude, ip->longitude);
       strcat(rest, tmp);
       tmp[0]='\0';
-    }
   } // for
 
   len = strlen(rest);
@@ -519,15 +534,14 @@ main(int argc, char **argv)
   free(rest);
   free(tmp);
 
-  sptr = sdhead;
+  sptr = __sdhead;
   do {
     close(sdp->desc);
     sptr = sptr->next;
-  } while (sptr != sdhead);
+  } while (sptr != __sdhead);
   free(buf);
   free(URL);
 
-  GeoIP_delete(geo);
 
   window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
@@ -554,13 +568,6 @@ main(int argc, char **argv)
   }
   g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
   gtk_widget_show_all(window);
-
-#ifdef NOPRINT
-  if (keep !=NULL) {
-    stderr = keep;
-  }
-  fclose(fp);
-#endif
 
   gtk_main();
 
