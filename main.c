@@ -37,6 +37,7 @@
 #include <GeoIP.h>
 #include <GeoIPCity.h>
 #include <curl/curl.h>
+#include <cairo.h>
 #include <gtk/gtk.h>
 
 #include "analyze.h"
@@ -81,7 +82,7 @@ static char *IP_FOWARD = "/proc/sys/net/ipv4/ip_forward";
 static char *ABC       = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 char        *MARKER    = "markers=size:tiny%7Ccolor:blue%7Clabel:S%7C<LATI>,<LONG>";
 /* REST for Google static map  */
-static char *STATICMAP_BASE_URL = "https://maps.google.com/maps/api/staticmap?center=38.822591,-98.818363&zoom=0&size=400x200&maptype=terrain&sensor=false";
+static char *STATICMAP_BASE_URL = "https://maps.google.com/maps/api/staticmap?center=38.822591,-98.818363&zoom=1&size=520x400&maptype=terrain&sensor=false";
 
 /* program name = argv[0] */
 char *__prog;
@@ -409,6 +410,20 @@ init(void)
   return(0);
 }
 
+static void 
+do_drawing(cairo_t *cr, cairo_surface_t *image)
+{
+  cairo_set_source_surface(cr, image, 0, 0);
+  cairo_paint(cr);    
+}
+
+static gboolean 
+on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data)
+{      
+  do_drawing(cr, (cairo_surface_t *)user_data);
+  return FALSE;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -422,6 +437,7 @@ main(int argc, char **argv)
   SocketDesc *sptr, *sdp, *mainp;
   GtkWidget *window;
   IP2Location *ip;
+  GtkWidget *image;
 
   static int BUF_SIZE = 2048;
 
@@ -460,7 +476,7 @@ main(int argc, char **argv)
   sigaddset(&sigset, SIGUSR1);
 
   i=0;
-  while(i++<=10) {
+  while(i++<=20) {
 
       FD_ZERO(&readfds);
       sptr = __sdhead;
@@ -576,34 +592,44 @@ main(int argc, char **argv)
   free(buf);
   free(URL);
 
-
   window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
-  gtk_widget_set_size_request(window, 500, 300);
   {
     GtkWidget *box;
+    GtkWidget *canvas;
 
     box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-
     gtk_container_add(GTK_CONTAINER(window), box);
+
+    canvas = gtk_drawing_area_new();
+
     {
-      GtkWidget *image;
       GtkWidget *button;
       
-      // a widget for image
-      image = gtk_image_new_from_file(TMP_PNG);
-      gtk_box_pack_start(GTK_BOX(box), image, TRUE, TRUE, 1);
+      image = cairo_image_surface_create_from_png(TMP_PNG);
+
+      // widget for image
+      gtk_box_pack_start(GTK_BOX(box), canvas, TRUE, TRUE, 1);
+
+      gtk_window_set_title(GTK_WINDOW(window), "IP locator");
+
+      gtk_widget_set_size_request(window, cairo_image_surface_get_width(image) * 1.1,
+				  cairo_image_surface_get_height(image) * 1.1);
+
       
       // button
       button = gtk_button_new_with_label("Quit");
       gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 1);
       g_signal_connect(G_OBJECT(button), "clicked", G_CALLBACK(button_clicked), NULL);
+      g_signal_connect(G_OBJECT(canvas), "draw", G_CALLBACK(on_draw_event), image); 
     }
   }
   g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
   gtk_widget_show_all(window);
 
   gtk_main();
+
+  cairo_surface_destroy(image);
 
   return 0;
 }
