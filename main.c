@@ -36,7 +36,6 @@
 #include <sys/select.h>
 #include <GeoIP.h>
 #include <GeoIPCity.h>
-#include <curl/curl.h>
 #include <cairo.h>
 #include <gtk/gtk.h>
 
@@ -64,7 +63,7 @@ typedef struct IP2Location {
   double latitude;
   double longitude;
   int marker;
-  unsigned char saddr[4];
+  u_int32_t saddr;
   int     port;
 } IP2Location;
 
@@ -77,12 +76,6 @@ static char * TMP_PNG = "tmp.png";
 
 /* number of IP address */
 static char *IP_FOWARD = "/proc/sys/net/ipv4/ip_forward";
-
-/* label of markers */
-static char *ABC       = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-char        *MARKER    = "markers=size:tiny%7Ccolor:blue%7Clabel:S%7C<LATI>,<LONG>";
-/* REST for Google static map  */
-static char *STATICMAP_BASE_URL = "https://maps.google.com/maps/api/staticmap?center=38.822591,-98.818363&zoom=1&size=520x400&maptype=terrain&sensor=false";
 
 /* program name = argv[0] */
 char *__prog;
@@ -97,38 +90,6 @@ button_clicked(GtkWidget *button, gpointer user_data)
 {
   GeoIP_delete(__geo);
   gtk_main_quit();
-}
-
-void
-buildURL(char **url)
-{
-  int len, n;
-  char *tmp, *c;
-  IP2Location *ip;
-
-  tmp = malloc(512);
-  len = 0;
-
-  for (ip=__ip2loc;ip!=__ip2loc;ip=ip->next) 
-    {
-      n = (int)((ip - __ip2loc)/26);
-      sprintf(tmp, "&markers=size:tiny|  color:blue|  label:%c|  %9.6f,%9.6f", ABC[n], ip->latitude, ip->longitude);
-      len = strlen(*url);
-      strcat(*url, tmp);
-    } 
-
-  len = strlen(*url);
-  for (c=*url;c-*url<=len;c++) {
-    if (*c == '|') {
-      c[0]='%';
-      c[1]='7';
-      c[2]='C';
-    }
-  }
-
-#ifdef URL
-  printf("URL: %s\n", *url);
-#endif
 }
 
 int
@@ -189,7 +150,7 @@ getCityFromIP(struct iphdr *iphdr)
 
   /* check if it's from the same source */
   for (pt=__ip2loc;pt!=__ip2loc;pt=pt->next) {
-    if (pt->saddr == iphdr->saddr) {
+    if ((u_int32_t)(pt->saddr) == iphdr->saddr) {
       // if it's same,  return
       return(pt);
     }
@@ -305,7 +266,7 @@ OpenRawSocket(int cnt, char **dev, int promiscFlag, int ipOnly)
       /* Alloc memory on SocketDesc */
       if ((newp=(SocketDesc *)malloc(sizeof(SocketDesc)))==NULL) {
 	fprintf(stderr, "%s: not enough memory\n", __prog);
-	return(-1);
+	return(NULL);
       }
       if (__sdhead==NULL) {
 	fprintf(stderr, "%s: internal inconsistency\n", __prog);
@@ -405,8 +366,6 @@ init(void)
   __sdhead->next = __sdhead;
   __sdhead->preb = __sdhead;
 
-  curl_global_init(CURL_GLOBAL_ALL);
-
   return(0);
 }
 
@@ -427,13 +386,10 @@ on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data)
 int
 main(int argc, char **argv)
 {
-  int  i, n, ndfd, size, len;
+  int  i, n, ndfd, size;
   u_char *buf;
-  char *URL, *rest, *tmp, *c;
   fd_set readfds;
   sigset_t sigset;
-  CURL *curl;
-  CURLcode res;
   SocketDesc *sptr, *sdp, *mainp;
   GtkWidget *window;
   IP2Location *ip;
@@ -457,12 +413,6 @@ main(int argc, char **argv)
     return(-1);
   }
 
-  if ((URL=(char *)malloc(BUF_SIZE))==NULL) {
-    perror("Not enoght memory");
-    GeoIP_delete(__geo);
-    return (-1);
-  }
-  URL[0]='\0';
 
   if ((sdp=OpenRawSocket(argc-1, argv, 0, 0))<0) {
     fprintf(stderr, "InitRawSocket:error:%s'n", argv[1]);
@@ -471,8 +421,8 @@ main(int argc, char **argv)
     return (-1);
   }
 
-  /* SIGUSR1のシグナルを設定 */
-  sigemptyset(&sigset);
+  /* register SIGUSR1 */
+   sigemptyset(&sigset);
   sigaddset(&sigset, SIGUSR1);
 
   i=0;
@@ -488,8 +438,8 @@ main(int argc, char **argv)
 	sptr = sptr->next;
       } while (sptr != __sdhead);
 
-      /* SIGUSR2が来るまでselectはblockし続けます */
-      /* SIGUSR1ではEINTRは返りません */
+      /* Block till SIGUSR2 up */
+      /* never return EINTER on SIGUSR1  */
       n = pselect(ndfd+1, &readfds, NULL, NULL, NULL, &sigset);
       /*    if (n == -1 && errno == EINTR)
 	    continue; */
@@ -514,84 +464,30 @@ main(int argc, char **argv)
       } while (mainp != __sdhead);
   } // while
 
-  // Build URL to get a map from Google
-  if ((rest = malloc(4096))==NULL) {
-    fprintf(stderr, "No memory");
-    return -1;
-  }
-  rest[0]='\0';
-
-  if ((tmp = malloc(512))==NULL) {
-    fprintf(stderr, "No memory");
-    return -1;
-  }
-  tmp[0]='\0';
-
-  strcat(rest, STATICMAP_BASE_URL);
-
+  /* Run __ip2loc to make markers on map */
   ip=__ip2loc;
   do { 
     if (ip->port != -1) {
       char buf[512];
-      fprintf(stdout, "IP         : %s\n", ip_ip2str(ip->saddr, buf, 512));
+      fprintf(stdout, "IP         : %s\n", (char *)ip_ip2str((u_int32_t)ip->saddr, buf, 512));
       fprintf(stdout, "Port       : %d\n", ip->port);
       fprintf(stdout, "Latitude   : %10.6f\n", ip->latitude);
       fprintf(stdout, "Longitude  : %10.6f\n", ip->longitude);
       fprintf(stdout, "Marker     : %d\n\n", ip->marker);
-      if (ip->marker) {
-	sprintf(tmp, "&markers=size:tiny|  color:blue|  label:%c:|  %f,%f", ABC[i], ip->latitude, ip->longitude);
-	strcat(rest, tmp);
-	tmp[0]='\0';
-      }
       ip=ip->next;
     }
   } while(ip!=__ip2loc);
   
-  len = strlen(rest);
-  for (c=rest;c-rest<=len;c++) {
-    if (*c == '|') {
-      c[0]='%';
-      c[1]='7';
-      c[2]='C';
-    }
-  } // for
-
-  fprintf(stdout, "REST: %s\n", rest);
-
-  curl = curl_easy_init();
-  if (curl) {
-    FILE *fp;
-
-    fp = fopen(TMP_PNG, "w");
-
-    curl_easy_setopt(curl, CURLOPT_URL, rest);
-
-    /* write image on a file */
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-
-    res = curl_easy_perform(curl);
-    if (res!= CURLE_OK) {
-      fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res)); 
-    }
-
-    curl_easy_cleanup(curl);
-    curl_global_cleanup();
-    fclose(fp);
-  }
-  free(rest);
-  free(tmp);
-
+  /* close socket */
   sptr = __sdhead;
   do {
     close(sdp->desc);
     sptr = sptr->next;
   } while (sptr != __sdhead);
   free(buf);
-  free(URL);
 
+
+  /* graphics */
   window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
   {
@@ -606,18 +502,17 @@ main(int argc, char **argv)
     {
       GtkWidget *button;
       
-      image = cairo_image_surface_create_from_png(TMP_PNG);
+      image = (GtkWidget *)cairo_image_surface_create_from_png(TMP_PNG);
 
-      // widget for image
+      /* widget for image */
       gtk_box_pack_start(GTK_BOX(box), canvas, TRUE, TRUE, 1);
 
       gtk_window_set_title(GTK_WINDOW(window), "IP locator");
 
-      gtk_widget_set_size_request(window, cairo_image_surface_get_width(image) * 1.1,
-				  cairo_image_surface_get_height(image) * 1.1);
+      gtk_widget_set_size_request(window, cairo_image_surface_get_width((cairo_surface_t *)image) * 1.1,
+				  cairo_image_surface_get_height((cairo_surface_t *)image) * 1.1);
 
-      
-      // button
+      /* Quit button */
       button = gtk_button_new_with_label("Quit");
       gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 1);
       g_signal_connect(G_OBJECT(button), "clicked", G_CALLBACK(button_clicked), NULL);
@@ -629,7 +524,7 @@ main(int argc, char **argv)
 
   gtk_main();
 
-  cairo_surface_destroy(image);
+  cairo_surface_destroy((cairo_surface_t *)image);
 
   return 0;
 }

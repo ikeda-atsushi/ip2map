@@ -52,7 +52,6 @@ AnalyzeArp(u_char *data, int size)
 {
   u_char *ptr;
   int    lest;
-  struct ether_arp *arp;
 
   ptr = data;
   lest = size;
@@ -63,13 +62,17 @@ AnalyzeArp(u_char *data, int size)
       return (-1);
     }
 
-  arp = (struct ether_arp *)ptr;
+#ifdef PRINT
+  {
+    struct ether_arp *arp;
+    arp = (struct ether_arp *)ptr;
+    PrintArp(arp, stderr);
+  }
+#endif
+
   ptr += sizeof(struct ether_arp);
   lest -= sizeof(struct ether_arp);
 
-#ifdef PRINT
-  PrintArp(arp, stderr);
-#endif
 
   return (0);
 }
@@ -80,8 +83,6 @@ AnalyzeIcmp(u_char *data, int size)
   u_char *ptr;
   int lest;
 
-  struct icmp *icmp;
-
   ptr = data;
   lest = size;
 
@@ -91,13 +92,17 @@ AnalyzeIcmp(u_char *data, int size)
       return (-1);
     }
   
-  icmp = (struct icmp *)ptr;
+#ifdef PRINT
+  {
+    struct icmp *icmp;
+    icmp = (struct icmp *)ptr;
+    PrintIcmp(icmp, stderr);
+  }
+#endif
+
   ptr += sizeof(struct icmp);
   lest -= sizeof(struct icmp);
 
-#ifdef PRINT
-  PrintIcmp(icmp, stderr);
-#endif
 
   return (0);
 }
@@ -108,8 +113,6 @@ AnalyzeIcmp6(u_char *data, int size)
   u_char *ptr;
   int lest;
 
-  struct icmp6_hdr *icmp6;
-
   ptr = data;
   lest = size;
 
@@ -119,13 +122,17 @@ AnalyzeIcmp6(u_char *data, int size)
       return (-1);
     }
   
-  icmp6 = (struct icmp6_hdr *)ptr;
+#ifdef PRINT
+  {  
+    struct icmp6_hdr *icmp6;
+    icmp6 = (struct icmp6_hdr *)ptr;
+    PrintIcmp6(icmp6, stderr);
+  }
+#endif
+
   ptr += sizeof(struct icmp6_hdr);
   lest -= sizeof(struct icmp6_hdr);
 
-#ifdef PRINT
-  PrintIcmp6(icmp6, stderr);
-#endif
 
   return (0);
 }
@@ -136,8 +143,6 @@ AnalyzeTcp(u_char *data, int size)
   u_char *ptr;
   int lest;
 
-  struct tcphdr *tcphdr;
-
   ptr = data;
   lest = size;
 
@@ -147,13 +152,17 @@ AnalyzeTcp(u_char *data, int size)
       return (-1);
     }
   
-  tcphdr = (struct tcphdr *)ptr;
+#ifdef PRINT
+  {
+    struct tcphdr *tcphdr;
+    tcphdr = (struct tcphdr *)ptr;
+    PrintTcp(tcphdr, stderr);
+  }
+#endif
+
   ptr += sizeof(struct tcphdr);
   lest -= sizeof(struct tcphdr);
 
-#ifdef PRINT
-  PrintTcp(tcphdr, stderr);
-#endif
 
   return (0);
 }
@@ -164,8 +173,6 @@ AnalyzeUdp(u_char *data, int size)
   u_char *ptr;
   int lest;
 
-  struct udphdr *udp;
-
   ptr = data;
   lest = size;
 
@@ -175,13 +182,16 @@ AnalyzeUdp(u_char *data, int size)
       return (-1);
     }
   
-  udp = (struct udphdr *)ptr;
+#ifdef PRINT
+  {
+    struct udphdr *udp;
+    udp = (struct udphdr *)ptr;
+    PrintUdp(udp, stderr);
+  }
+#endif 
+
   ptr += sizeof(struct udphdr);
   lest -= sizeof(struct udphdr);
-
-#ifdef PRINT
-  PrintUdp(udp, stderr);
-#endif 
 
   return (0);
 }
