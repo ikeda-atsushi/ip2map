@@ -20,7 +20,7 @@
  #######################################################################################################################
 
 CC  = /usr/bin/cc
-LDLIBS = `pkg-config --libs gtk+-3.0` -lGeoIP -lcurl
+LDLIBS = `pkg-config --libs gtk+-3.0` -lGeoIP -lm
 CFLAGS = -g -Wall `pkg-config --cflags gtk+-3.0`
 PROG = ip2map
 SRCS = main.c \
