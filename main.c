@@ -96,16 +96,16 @@ static char *IP_FOWARD = "/proc/sys/net/ipv4/ip_forward";
 static char *__prog;
 
 /* scale of map image*/
-//static double IMAGE_SCALE=0.38;
 static double IMAGE_SCALE=0.38;
 
 IP2Location   *getCityFromIP(struct iphdr *iphdr);
 SocketDesc    *OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly);
 char          *ip_ip2str(u_int32_t ip, char *buf, socklen_t size);
 int            turnOffIPforward(void);
+void           pol2xy(xyz *xyzp, polacd *cdp);
 static void    do_drawing(cairo_t *, cairo_surface_t *);
 static void    button_clicked(GtkWidget *button, gpointer user_data);
-void           pol2xy(xyz *xyzp, polacd *cdp);
+static void    put_marker_on_map(cairo_t *cr, double x, double y);
 
 /* Quit button event */
 static void 
@@ -119,12 +119,15 @@ button_clicked(GtkWidget *button, gpointer user_data)
 void 
 pol2xy(xyz *xyzp, polacd *cdp)
 {
-  double clati = cos(cdp->dlati);
-  double r = cdp->dr;
+  
+  if (  -180.0 <= cdp->dlong && cdp->dlong < -30.0) {
+    xyzp->x = 4.7 * cdp->dlong + 2030;
+  } else if (-30.0 <= cdp->dlong && cdp->dlong <= 180.0) {
+    xyzp->x = 4.7 * cdp->dlong + 338;
+  }
 
-  xyzp->x = r * clati * cos(cdp->dlong);
-  xyzp->y = r * clati * sin(cdp->dlong);
-  xyzp->z = r * sin(cdp->dlati);
+  xyzp->y = -4.7 * cdp->dlati + 534;
+  xyzp->z = 0;
 
   return;
 }
@@ -191,11 +194,11 @@ do_drawing(cairo_t *cr, cairo_surface_t *image)
       buf[0]='\0';
       cdp.dlati = ip->latitude;
       cdp.dlong = ip->longitude;
-      cdp.dr = 270.2451;
+      cdp.dr = 270.245093;
       pol2xy(&xy, &cdp);
-      printf("x=%f y=%f\n\n", (A * xy.x + B), (C * xy.y + D));
 
-      put_marker_on_map(cr, (A * xy.x + B), (C * xy.y + D));
+      printf("x=%f y=%f\n\n", xy.x, xy.y);
+      put_marker_on_map(cr, xy.x,  xy.y);
 
       ip=ip->next;
     }
