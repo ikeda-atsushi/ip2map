@@ -221,4 +221,3 @@ checkIP6DATAchecksum(struct ip6_hdr *ip, unsigned char *data, int len)
       return (0);
     }
 }
-

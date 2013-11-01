@@ -25,8 +25,7 @@ CFLAGS = -g -Wall `pkg-config --cflags gtk+-3.0`
 PROG = ip2map
 SRCS = main.c \
 	analyze.c \
-	checksum.c \
-	print.c
+	checksum.c 
 OBJS = ${SRCS:%.c=%.o}
 
 all: ${PROG}

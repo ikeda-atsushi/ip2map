@@ -36,12 +36,12 @@
 #include <signal.h>
 #include <sys/select.h>
 #include <GeoIP.h>
-#include <GeoIPCity.h>
+//#include <GeoIPCity.h>
 #include <cairo.h>
 #include <gtk/gtk.h>
 #include <errno.h>
 
-#include "analyze.h"
+#include "ip2loc.h"
 
 #define Latt 0
 #define Long 1
@@ -49,25 +49,8 @@
 #undef max
 #define max(x,y) ((x) > (y) ? (x) : (y))
 
-typedef struct SocketDesc {
-  struct SocketDesc *next; 
-  struct SocketDesc *preb;
-  int desc;
-} SocketDesc;
-
 SocketDesc *__sdhead;
 static GeoIP *__geo;
-
-typedef struct IP2Location {
-  struct IP2Location *next;
-  struct IP2Location *preb;
-  GeoIPRecord        *geoip;
-  double     latitude;
-  double     longitude;
-  u_int32_t  saddr;
-  int        port;
-  int        marker;
-} IP2Location;
 
 IP2Location *__ip2loc;
 
@@ -98,14 +81,26 @@ static char *__prog;
 /* scale of map image*/
 static double IMAGE_SCALE=0.38;
 
-IP2Location   *getCityFromIP(struct iphdr *iphdr);
-SocketDesc    *OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly);
-char          *ip_ip2str(u_int32_t ip, char *buf, socklen_t size);
+int            AnalyzePacket(u_char *data, int size);
 int            turnOffIPforward(void);
 void           pol2xy(xyz *xyzp, polacd *cdp);
+char          *ip_ip2str(u_int32_t ip, char *buf, socklen_t size);
+IP2Location   *getCityFromIP(struct iphdr *iphdr);
+SocketDesc    *OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly);
 static void    do_drawing(cairo_t *, cairo_surface_t *);
 static void    button_clicked(GtkWidget *button, gpointer user_data);
 static void    put_marker_on_map(cairo_t *cr, double x, double y);
+
+char *
+ip_ip2str(u_int32_t ip, char *buf, socklen_t size)
+{
+  struct in_addr *addr;
+
+  addr = (struct in_addr *)&ip;
+  inet_ntop(AF_INET, addr, buf, size);
+
+  return (buf);
+}
 
 /* Quit button event */
 static void 
@@ -163,13 +158,6 @@ static void
 do_drawing(cairo_t *cr, cairo_surface_t *image)
 {
   IP2Location *ip;
-  double A, B, C, D;
-
-  A = 0.8997;
-  C = 0.2051;
-    
-  B = 1701.0185;
-  D = 361.7967;
 
   /* expand, shurink of image */
   cairo_scale(cr, IMAGE_SCALE, IMAGE_SCALE);
@@ -587,7 +575,8 @@ main(int argc, char **argv)
     canvas = gtk_drawing_area_new();
 
     {
-      GtkWidget *button;
+      GtkWidget *Quit;
+      GtkWidget *Rescan;
       
       image = (GtkWidget *)cairo_image_surface_create_from_png(MAP_PNG);
 
@@ -599,13 +588,17 @@ main(int argc, char **argv)
       gtk_widget_set_size_request(window, cairo_image_surface_get_width((cairo_surface_t *)image) * IMAGE_SCALE,
 	      cairo_image_surface_get_height((cairo_surface_t *)image) * IMAGE_SCALE); 
 
+      /* Rescan button */
+      Rescan = gtk_button_new_with_label("Rescan");
+      gtk_box_pack_start(GTK_BOX(box), Rescan, FALSE, FALSE, 1);
       /* Quit button */
-      button = gtk_button_new_with_label("Quit");
-      gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 1);
+      Quit = gtk_button_new_with_label("Quit");
+      gtk_box_pack_start(GTK_BOX(box), Quit, FALSE, FALSE, 1);
 
       /* connect signa and event */
       /* Quit button */
-      g_signal_connect(G_OBJECT(button), "clicked", G_CALLBACK(button_clicked), NULL);
+      g_signal_connect(G_OBJECT(Quit), "clicked", G_CALLBACK(button_clicked), NULL);
+
       /* Close window */
       g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
       /* Draw map */
