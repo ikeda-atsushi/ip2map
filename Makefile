@@ -37,7 +37,7 @@ ${PROG}: ${OBJS}
 	${CC} ${INCLUDE} ${CFLAGS} -c $<
 
 clean:
-	${RM} -f ${PROG} ${OBJS} tmp.png *~
+	${RM} -f ${PROG} ${OBJS} tmp.png core *~ 
 
 print:
 	echo ${OBJS}

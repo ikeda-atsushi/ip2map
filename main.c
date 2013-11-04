@@ -39,9 +39,13 @@
 //#include <GeoIPCity.h>
 #include <cairo.h>
 #include <gtk/gtk.h>
+#include <glib-object.h>
 #include <errno.h>
 
 #include "ip2loc.h"
+
+GtkWidget *__image__;
+GtkWidget *__window__;
 
 #define Latt 0
 #define Long 1
@@ -81,15 +85,20 @@ static char *__prog;
 /* scale of map image*/
 static double IMAGE_SCALE=0.38;
 
+/* Buffer size */
+static int BUF_SIZE = 2048;
+
 int            AnalyzePacket(u_char *data, int size);
 int            turnOffIPforward(void);
 void           pol2xy(xyz *xyzp, polacd *cdp);
 char          *ip_ip2str(u_int32_t ip, char *buf, socklen_t size);
 IP2Location   *getCityFromIP(struct iphdr *iphdr);
 SocketDesc    *OpenRawSocket(int argc, char **dev, int promiscFlag, int ipOnly);
-static void    do_drawing(cairo_t *, cairo_surface_t *);
-static void    button_clicked(GtkWidget *button, gpointer user_data);
-static void    put_marker_on_map(cairo_t *cr, double x, double y);
+static void    do_drawing_image(cairo_t *, cairo_surface_t *);
+static gboolean on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data);
+static void    quit_clicked(GtkWidget *button, gpointer user_data);
+static int     scan_packets(void);
+static void    put_marker_on_image(cairo_t *cr, double x, double y);
 
 char *
 ip_ip2str(u_int32_t ip, char *buf, socklen_t size)
@@ -102,12 +111,43 @@ ip_ip2str(u_int32_t ip, char *buf, socklen_t size)
   return (buf);
 }
 
+
+/* Rescan event */
+static void
+rescan_clicked(GtkWidget *button, gpointer drawing_area)
+{
+  int i;
+
+  i=1;;
+  do {
+    scan_packets();
+  } while (i++<=20);
+
+  /* Re-draw window */
+  gtk_widget_queue_draw(GTK_WIDGET(drawing_area));
+
+  return;
+}
+
 /* Quit button event */
 static void 
-button_clicked(GtkWidget *button, gpointer user_data)
+quit_clicked(GtkWidget *button, gpointer user_data)
 {
+  SocketDesc *sptr, *sdp;
+
+  sdp =(SocketDesc *)user_data ;
+
+  /* close socket */
+  sptr = __sdhead;
+  do {
+    close(sdp->desc);
+    sptr = sptr->next;
+  } while (sptr != __sdhead);
+
   GeoIP_delete(__geo);
   gtk_main_quit();
+
+  return;
 }
 
 /* polacd to xy */
@@ -128,8 +168,7 @@ pol2xy(xyz *xyzp, polacd *cdp)
 }
 
 /* put markers on map */
-static void 
-put_marker_on_map(cairo_t *cr, double x, double y)
+static void put_marker_on_image(cairo_t *cr, double x, double y)
 {
   /* radius */
   double radius = 10.0;
@@ -148,14 +187,16 @@ put_marker_on_map(cairo_t *cr, double x, double y)
 
 /* Draw a png file */
 static gboolean 
-on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer user_data)
-{      
-  do_drawing(cr, (cairo_surface_t *)user_data);
+on_draw_event(GtkWidget *widget, cairo_t *cr, gpointer image)
+{
+  fprintf(stdout, "\n>>>>>>>>>> on_draw_event <<<<<<<<<<<<\n\n ");
+  do_drawing_image(cr, (cairo_surface_t *)image);
+
   return FALSE;
 }
 
 static void 
-do_drawing(cairo_t *cr, cairo_surface_t *image)
+do_drawing_image(cairo_t *cr, cairo_surface_t *image)
 {
   IP2Location *ip;
 
@@ -171,10 +212,10 @@ do_drawing(cairo_t *cr, cairo_surface_t *image)
     polacd cdp;
     xyz  xy;
 
-    if (ip->port != -1) {
+    if (ip->port != -1 && ip->marker) {
       char buf[16];
 
-      fprintf(stdout, "IP         : %s\n", ip_ip2str(ip->saddr, buf, sizeof(buf)));
+      fprintf(stdout, "IP         : [%s]\n", ip_ip2str(ip->saddr, buf, sizeof(buf)));
       fprintf(stdout, "Port       : %d\n", ip->port);
       fprintf(stdout, "Latitude   : %10.6f\n", ip->latitude);
       fprintf(stdout, "Longitude  : %10.6f\n", ip->longitude);
@@ -185,13 +226,14 @@ do_drawing(cairo_t *cr, cairo_surface_t *image)
       cdp.dr = 270.245093;
       pol2xy(&xy, &cdp);
 
-      printf("x=%f y=%f\n\n", xy.x, xy.y);
-      put_marker_on_map(cr, xy.x,  xy.y);
-
-      ip=ip->next;
+      fprintf(stdout, "(x, y)     : x=%f, y=%f\n\n", xy.x, xy.y);
+      put_marker_on_image(cr, xy.x,  xy.y);
     }
-  } while(ip!=__ip2loc);
+    ip=ip->next;
 
+  } while(ip != __ip2loc);
+
+  fprintf(stdout, "******* do_drawing_image done ******\n\n");
   return;
 }
 
@@ -251,13 +293,16 @@ getCityFromIP(struct iphdr *iphdr)
     return (NULL);
   }
 
-  /* check if it's from the same source */
-  for (pt=__ip2loc;pt!=__ip2loc;pt=pt->next) {
+  /* check if packet is from the same source */
+  pt=__ip2loc;
+  do {
     if ((u_int32_t)(pt->saddr) == iphdr->saddr) {
       // if it's same,  return
+      fprintf(stdout,"xxxxxxxxxx same source xxxxxxxxxxxxx\n");
       return(pt);
     }
-  } // for
+    pt=pt->next;
+  } while (pt!=__ip2loc);
 
   if ((rec=GeoIP_record_by_addr(__geo, ip_ip2str(iphdr->saddr, buf, BUF_SIZE))) == NULL) {
     fprintf(stderr, "error on getting geocode\n");
@@ -268,7 +313,7 @@ getCityFromIP(struct iphdr *iphdr)
   tcphdr += sizeof(struct iphdr);
 
   //#ifdef GEOCODE
-  fprintf(stdout, "===\n");
+  fprintf(stdout, "=== link-in ==\n");
   fprintf(stdout, "IP         : %s\n", ip_ip2str(iphdr->saddr, buf, BUF_SIZE));
   fprintf(stdout, "Port       : %u\n", ntohs(((struct tcphdr *)tcphdr)->dest));
   fprintf(stdout, "Contry     : %s\n", rec->country_name);
@@ -276,6 +321,7 @@ getCityFromIP(struct iphdr *iphdr)
   fprintf(stdout, "Postal code: %s\n", rec->postal_code);
   fprintf(stdout, "Latitude   : %10.6f\n", rec->latitude);
   fprintf(stdout, "Longitude  : %10.6f\n\n", rec->longitude);
+  fprintf(stdout, "=======\n\n");
   //#endif
 
   if (__ip2loc->port == -1) {
@@ -435,6 +481,59 @@ sigusr2_handler(int sig)
   fprintf(stdout, "signal USR2 called\n");
 }
 
+static int
+scan_packets(void)
+{
+  int n, ndfd, size;
+  u_char *buf;
+  fd_set readfds;
+  SocketDesc *sptr, *mainp;
+  sigset_t sigset;
+
+  buf = malloc(BUF_SIZE);
+  
+  /* register SIGUSR1 */
+  sigemptyset(&sigset);
+  sigaddset(&sigset, SIGUSR1);
+
+  FD_ZERO(&readfds);
+  sptr = __sdhead;
+  ndfd = 0;
+
+  do {
+    FD_SET(sptr->desc, &readfds);
+    ndfd = max(ndfd, sptr->desc);
+    sptr = sptr->next;
+  } while (sptr != __sdhead);
+
+  /* Block till SIGUSR2 up */
+  /* never return EINTER on SIGUSR1  */
+  n = pselect(ndfd+1, &readfds, NULL, NULL, NULL, &sigset);
+  if (n < 0) {
+    fprintf (stderr, "%s: select error\n", __prog);
+    GeoIP_delete(__geo);
+    return (-1);
+  }
+  
+  mainp = __sdhead;
+  do {
+    if (FD_ISSET(mainp->desc, &readfds)) {
+      if ((size=read(mainp->desc, buf, BUF_SIZE))<=0) {
+	if (size==0) break;
+	fprintf(stderr, "%s: error on read\n", __prog);
+	break;
+      } 
+      AnalyzePacket(buf, size);
+    }
+    mainp = mainp->next;
+  } while (mainp != __sdhead);
+
+  free(buf);
+
+  return(0);
+}
+/* scan_packets */
+
 int
 init(void)
 {
@@ -473,19 +572,13 @@ init(void)
   return(0);
 }
 
-
 int
 main(int argc, char **argv)
 {
-  int  i, n, ndfd, size;
-  u_char *buf;
-  fd_set readfds;
-  sigset_t sigset;
-  SocketDesc *sptr, *sdp, *mainp;
+  int  i;
+  SocketDesc *sdp;
   GtkWidget *window;
   GtkWidget *image;
-
-  static int BUF_SIZE = 2048;
 
   __prog = argv[0];
 
@@ -498,74 +591,22 @@ main(int argc, char **argv)
 
   gtk_init(&argc, &argv);
 
-  if ((buf=(u_char *)malloc(BUF_SIZE))==NULL) {
-    perror("malloc");
-    return(-1);
-  }
-
-
   if ((sdp=OpenRawSocket(argc-1, argv, 0, 0))<0) {
     fprintf(stderr, "InitRawSocket:error:%s'n", argv[1]);
-    free(buf);
     GeoIP_delete(__geo);
     return (-1);
   }
 
-  /* register SIGUSR1 */
-   sigemptyset(&sigset);
-  sigaddset(&sigset, SIGUSR1);
-
-  i=0;
-  while(i++<=20) {
-
-      FD_ZERO(&readfds);
-      sptr = __sdhead;
-      ndfd = 0;
-
-      do {
-	FD_SET(sptr->desc, &readfds);
-	ndfd = max(ndfd, sptr->desc);
-	sptr = sptr->next;
-      } while (sptr != __sdhead);
-
-      /* Block till SIGUSR2 up */
-      /* never return EINTER on SIGUSR1  */
-      n = pselect(ndfd+1, &readfds, NULL, NULL, NULL, &sigset);
-      /*    if (n == -1 && errno == EINTR)
-	    continue; */
-      if (n < 0) {
-	fprintf (stderr, "%s: select error\n", __prog);
-	GeoIP_delete(__geo);
-	return (-1);
-      }
-      mainp = __sdhead;
-      do {
-	if (FD_ISSET(mainp->desc, &readfds)) {
-	  
-	  if ((size=read(mainp->desc, buf, BUF_SIZE))<=0) {
-	    if (size==0) break;
-	    fprintf(stderr, "%s: error on read\n", __prog);
-	    break;
-	  } 
-
-	  AnalyzePacket(buf, size);
-	}
-	mainp = mainp->next;
-      } while (mainp != __sdhead);
-  } // while
-
-  /* close socket */
-  sptr = __sdhead;
+  i=1;
   do {
-    close(sdp->desc);
-    sptr = sptr->next;
-  } while (sptr != __sdhead);
-  free(buf);
+    scan_packets();
+  } while(i++<=20);/* while */
 
-  /* graphics */
-  window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
-  {
+  /* drawing a map on window */
+  __window__ = window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+
+ {
     GtkWidget *box;
     GtkWidget *canvas;
 
@@ -586,7 +627,7 @@ main(int argc, char **argv)
       gtk_window_set_title(GTK_WINDOW(window), "IP locator");
 
       gtk_widget_set_size_request(window, cairo_image_surface_get_width((cairo_surface_t *)image) * IMAGE_SCALE,
-	      cairo_image_surface_get_height((cairo_surface_t *)image) * IMAGE_SCALE); 
+              cairo_image_surface_get_height((cairo_surface_t *)image) * IMAGE_SCALE); 
 
       /* Rescan button */
       Rescan = gtk_button_new_with_label("Rescan");
@@ -597,7 +638,9 @@ main(int argc, char **argv)
 
       /* connect signa and event */
       /* Quit button */
-      g_signal_connect(G_OBJECT(Quit), "clicked", G_CALLBACK(button_clicked), NULL);
+      g_signal_connect(G_OBJECT(Quit), "clicked", G_CALLBACK(quit_clicked), NULL);
+      /* Rescan button */
+      g_signal_connect(G_OBJECT(Rescan), "clicked", G_CALLBACK(rescan_clicked), canvas);
 
       /* Close window */
       g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
@@ -605,12 +648,11 @@ main(int argc, char **argv)
       g_signal_connect(G_OBJECT(canvas), "draw", G_CALLBACK(on_draw_event), image); 
     }
   }
-  g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-  gtk_widget_show_all(window);
 
+  gtk_widget_show_all(window);
   gtk_main();
 
-  cairo_surface_destroy((cairo_surface_t *)image);
+  // cairo_surface_destroy((cairo_surface_t *)image);
 
   return 0;
 }
