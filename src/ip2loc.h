@@ -20,5 +20,16 @@ typedef struct SocketDesc {
   int desc;
 } SocketDesc;
 
+typedef struct xyz {
+  double x;
+  double y;
+  double z;
+} xyz;
+
+typedef struct polacd {
+  double dlong;
+  double dlati;
+  double dr;
+} polacd;
 
 #endif
