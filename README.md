@@ -20,17 +20,15 @@ $ mv GeoLiteCity.dat /usr/local/share/GeoIP/
 
 Install
 =======
-
-# cd src
-# make
-# sudo make install
+$ cd src
+$ make
+$ sudo make install
 
 Run
 ===
-# sudo ip2man eth0 
+$ sudo ip2man eth0 
 
 
 Known bugs
 ==========
-
 - segfault 
