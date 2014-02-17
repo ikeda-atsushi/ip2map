@@ -22,6 +22,7 @@
 CC  = /usr/bin/cc
 LDLIBS = `pkg-config --libs gtk+-3.0` -lGeoIP -lm
 CFLAGS = -g -Wall `pkg-config --cflags gtk+-3.0`
+INCLUDE = -I/usr/include -I/usr/include/cairo
 PROG = ip2map
 SRCS = main.c \
 	analyze.c \

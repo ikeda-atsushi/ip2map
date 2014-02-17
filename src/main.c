@@ -39,7 +39,7 @@
 #define max(x,y) ((x) > (y) ? (x) : (y))
 
 /* GEOIP data base */
-static char * DB_CITY ="/usr/share/GeoIP/GeoIPCity.dat";
+static char * DB_CITY ="/usr/local/share/GeoIP/GeoLiteCity.dat";
 /* Buffer size */
 static int    BUF_SIZE = 2048;
 
@@ -139,7 +139,7 @@ init(void)
   signal(SIGUSR2, sigusr2_handler);
   
   if ((__geo=GeoIP_open(DB_CITY, 0))==NULL) {
-    fprintf(stderr, "%s: GeoIPCity.dat does not exist\n", __prog);
+    fprintf(stderr, "%s: City data does not exist\n", __prog);
     return (-1);
   }
 
